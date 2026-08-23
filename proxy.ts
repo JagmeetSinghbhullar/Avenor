@@ -2,15 +2,10 @@ import { createServerClient } from "@supabase/ssr";
 import { type NextRequest, NextResponse } from "next/server";
 
 /**
- * Refreshes the Supabase auth session cookie on every request — required
- * by @supabase/ssr's cookie-based session model, since Server Components
- * can't write cookies themselves (see lib/supabase/server.ts). Without
- * this, sessions would silently expire.
- *
- * This does NOT yet redirect unauthenticated requests — that's Route
- * Protection (the next step), added on top of this same file.
- *
- * Named `proxy` (not `middleware`) per Next.js 16 — see
+ * Refreshes the Supabase auth session cookie on every request (required by
+ * @supabase/ssr — see lib/supabase/server.ts) and gates every route except
+ * the auth pages and the local dev-preview tool behind a signed-in
+ * session. Named `proxy` (not `middleware`) per Next.js 16 — see
  * node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/proxy.md.
  */
 export async function proxy(request: NextRequest) {
@@ -39,7 +34,27 @@ export async function proxy(request: NextRequest) {
 
   // Touches the session so an expired access token gets refreshed via the
   // refresh token before any Server Component reads it.
-  await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const { pathname } = request.nextUrl;
+  const isAuthPage = pathname === "/login" || pathname.startsWith("/auth/callback");
+  // Never committed / not part of the production app — the user's own
+  // local component-verification tool, shows no real data.
+  const isDevPreview = pathname === "/dev-preview" || pathname.startsWith("/dev-preview/");
+
+  if (!user && !isAuthPage && !isDevPreview) {
+    const loginUrl = new URL("/login", request.url);
+    loginUrl.searchParams.set("next", pathname);
+    return NextResponse.redirect(loginUrl);
+  }
+
+  // Already signed in — don't show the login page again (e.g. after
+  // navigating back in browser history).
+  if (user && pathname === "/login") {
+    return NextResponse.redirect(new URL("/", request.url));
+  }
 
   return supabaseResponse;
 }

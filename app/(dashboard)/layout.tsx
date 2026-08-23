@@ -1,45 +1,48 @@
+import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
-import { Sidebar } from "@/components/layout/Sidebar";
-import { Topbar, type TopbarUser } from "@/components/layout/Topbar";
-import { createClient } from "@/lib/supabase/server";
+import { AppShell } from "@/components/layout/AppShell";
+import type { TopbarUser } from "@/components/layout/Topbar";
+import { getCurrentUserStatus } from "@/lib/user-status";
 
 /**
- * Shell for the dashboard and any future pages (History, Settings, ...).
+ * Shell for the dashboard specifically (not /profile — see
+ * app/profile/layout.tsx, which shares AppShell but not this gate).
  * A route group ("(dashboard)") so this layout applies without adding a
  * path segment — the dashboard page itself still lives at "/".
  *
  * A Server Component (not "use client") specifically so it can read the
- * session via lib/supabase/server.ts and hand a plain, serializable user
+ * session via lib/user-status.ts and hand a plain, serializable user
  * object down to Topbar — no client-side auth fetch/flash needed.
+ *
+ * Two gates, both server-enforced before `children` (and therefore the
+ * dashboard page's client-side YouTrack fetch) ever renders:
+ *  1. No session -> /login. proxy.ts already redirects this case too;
+ *     this is defense in depth for any route added under this layout
+ *     without the proxy's matcher being updated.
+ *  2. Signed in but YouTrack not connected -> /onboarding. This is what
+ *     makes "do not fetch any YouTrack data until setup is complete" a
+ *     structural guarantee rather than a UI convention — the page that
+ *     calls useYouTrackSync is never reached at all. Slack is
+ *     deliberately NOT part of this gate — it's optional (see the
+ *     dashboard page, which disables just the Send Report action when
+ *     Slack isn't connected rather than blocking the whole dashboard).
  */
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
-  const supabase = await createClient();
-  const {
-    data: { user: authUser },
-  } = await supabase.auth.getUser();
+  const status = await getCurrentUserStatus();
 
-  const topbarUser: TopbarUser | null = authUser
-    ? {
-        name:
-          (authUser.user_metadata.full_name as string | undefined) ??
-          (authUser.user_metadata.name as string | undefined) ??
-          authUser.email ??
-          "Signed in",
-        email: authUser.email ?? "",
-        avatarUrl:
-          (authUser.user_metadata.avatar_url as string | undefined) ??
-          (authUser.user_metadata.picture as string | undefined) ??
-          null,
-      }
-    : null;
+  if (!status) {
+    redirect("/login");
+  }
 
-  return (
-    <div className="flex min-h-full flex-col">
-      <Topbar user={topbarUser} />
-      <div className="flex flex-1">
-        <Sidebar />
-        <main className="flex-1 p-4 md:p-8 lg:p-10">{children}</main>
-      </div>
-    </div>
-  );
+  if (!status.youtrackConnected) {
+    redirect("/onboarding");
+  }
+
+  const topbarUser: TopbarUser = {
+    name: status.name,
+    email: status.email,
+    avatarUrl: status.avatarUrl,
+  };
+
+  return <AppShell user={topbarUser}>{children}</AppShell>;
 }

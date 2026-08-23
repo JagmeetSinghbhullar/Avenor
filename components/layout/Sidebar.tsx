@@ -1,12 +1,12 @@
 "use client";
 
-import { Home } from "lucide-react";
+import { Home, User } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { NAV_ITEMS } from "@/constants/navigation";
 import { cn } from "@/lib/cn";
 
-const NAV_ICONS = { "/": Home } as const;
+const NAV_ICONS = { "/": Home, "/profile": User } as const;
 
 /** Hidden below md — mobile relies on the Topbar alone for now (see PageHeader spec: mobile polish is a later pass). */
 export function Sidebar() {

@@ -2,6 +2,7 @@
 
 import { LogOut } from "lucide-react";
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
@@ -23,33 +24,38 @@ export function UserMenu({ name, email, avatarUrl }: UserMenuProps) {
 
   return (
     <div className="flex items-center gap-2.5">
-      {avatarUrl ? (
-        <Image
-          src={avatarUrl}
-          alt=""
-          width={32}
-          height={32}
-          className="h-8 w-8 rounded-full"
-          referrerPolicy="no-referrer"
-        />
-      ) : (
-        <span
-          aria-hidden="true"
-          className="bg-primary-subtle text-primary-subtle-foreground flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold"
-        >
-          {name.charAt(0).toUpperCase()}
-        </span>
-      )}
-      <div className="hidden flex-col leading-tight sm:flex">
-        <span className="text-foreground text-sm font-medium">{name}</span>
-        <span className="text-muted-foreground text-xs">{email}</span>
-      </div>
+      <Link
+        href="/profile"
+        className="flex items-center gap-2.5 rounded-lg px-1.5 py-1 transition-colors duration-150 hover:bg-muted"
+      >
+        {avatarUrl ? (
+          <Image
+            src={avatarUrl}
+            alt=""
+            width={32}
+            height={32}
+            className="h-8 w-8 rounded-full"
+            referrerPolicy="no-referrer"
+          />
+        ) : (
+          <span
+            aria-hidden="true"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-subtle text-sm font-semibold text-primary-subtle-foreground"
+          >
+            {name.charAt(0).toUpperCase()}
+          </span>
+        )}
+        <div className="hidden flex-col leading-tight sm:flex">
+          <span className="text-sm font-medium text-foreground">{name}</span>
+          <span className="text-xs text-muted-foreground">{email}</span>
+        </div>
+      </Link>
       <button
         type="button"
         onClick={() => void handleSignOut()}
         aria-label="Sign out"
         title="Sign out"
-        className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-lg p-2 transition-colors duration-150"
+        className="rounded-lg p-2 text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground"
       >
         <LogOut className="h-4 w-4" strokeWidth={2} />
       </button>

@@ -15,13 +15,17 @@ export interface UseYouTrackSyncResult {
  * Owns fetching from /api/youtrack/sync so components never call fetch
  * directly. Syncs once automatically on mount, and exposes `sync` for a
  * manual trigger (the dashboard's Sync button).
+ *
+ * `enabled` is false when the signed-in user hasn't connected YouTrack —
+ * in that case this hook never calls the sync API at all (not even the
+ * mount-time sync), since there's nothing to sync and the endpoint would
+ * just return a "not connected" error.
  */
-export function useYouTrackSync(): UseYouTrackSyncResult {
+export function useYouTrackSync(enabled: boolean): UseYouTrackSyncResult {
   const [data, setData] = useState<YouTrackSyncResult | null>(null);
-  // Starts true because a sync always fires on mount (see the effect below) —
-  // this lets the initial effect call stay free of a synchronous setState
-  // before its first `await`, which is what the mount-time sync needs.
-  const [isLoading, setIsLoading] = useState(true);
+  // Starts true only when enabled, since a sync only fires on mount when
+  // enabled — see the effect below.
+  const [isLoading, setIsLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
 
   const performSync = useCallback(async () => {
@@ -44,12 +48,18 @@ export function useYouTrackSync(): UseYouTrackSyncResult {
 
   /** Manual trigger (the Sync button) — safe to set state synchronously here since it's an event handler, not an effect. */
   const sync = useCallback((): Promise<void> => {
+    if (!enabled) {
+      return Promise.resolve();
+    }
     setIsLoading(true);
     setError(null);
     return performSync();
-  }, [performSync]);
+  }, [performSync, enabled]);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
     // Intentional: this is React's own documented "fetching data in an
     // Effect" pattern (react.dev/learn/synchronizing-with-effects). The
     // lint rule flags any effect-invoked function that calls setState
@@ -59,7 +69,7 @@ export function useYouTrackSync(): UseYouTrackSyncResult {
     // this doesn't loop or cascade.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void performSync();
-  }, [performSync]);
+  }, [performSync, enabled]);
 
   return { data, isLoading, error, sync };
 }

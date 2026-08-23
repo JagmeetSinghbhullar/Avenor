@@ -49,6 +49,25 @@ function readConfigFromEnv(): Partial<YouTrackConfig> {
   };
 }
 
+/**
+ * True only when the fallback has been explicitly opted into
+ * (ENABLE_DEV_YOUTRACK_FALLBACK=true) AND every env var needed for the
+ * legacy, whole-project sync path is set. Opt-in on purpose: just having
+ * YOUTRACK_* set in .env.local (e.g. left over from before per-user
+ * integrations existed) must never silently make every unconnected user
+ * see a shared project's tickets — someone has to deliberately turn this
+ * on. The sync route uses this as a local-development convenience for
+ * when a user has no saved YouTrack integration yet — never as a
+ * substitute for a real per-user connection in production.
+ */
+export function isDevFallbackConfigured(): boolean {
+  if (process.env.ENABLE_DEV_YOUTRACK_FALLBACK !== "true") {
+    return false;
+  }
+  const config = readConfigFromEnv();
+  return !!(config.baseUrl && config.apiToken && config.projectId);
+}
+
 // --- Raw YouTrack REST API response shape (internal only) -----------------
 
 const youTrackFieldValueSchema = z
@@ -121,26 +140,80 @@ export class YouTrackService {
     };
   }
 
-  /** All tickets in the configured project. */
-  async getAssignedTickets(): Promise<YouTrackTicket[]> {
-    return this.fetchIssues(this.projectScope());
-  }
+  /**
+   * Verifies Base URL + API Token + Project + Login together by running
+   * the exact same query shape production sync uses (project + for-login
+   * scoping), just with $top=1 — so a successful test is a real guarantee
+   * the saved credentials will work, not a separate, narrower check.
+   */
+  async testConnection(login: string): Promise<void> {
+    const url = new URL(`${this.config.baseUrl}/api/issues`);
+    url.searchParams.set("query", `${this.projectScope()} for: {${login}}`);
+    url.searchParams.set("fields", "idReadable");
+    url.searchParams.set("$top", "1");
 
-  /** Tickets created today, in the configured project. */
-  async getCreatedToday(): Promise<YouTrackTicket[]> {
-    return this.fetchIssues(`${this.projectScope()} created: Today`);
+    let response: Response;
+    try {
+      response = await fetch(url.toString(), {
+        headers: {
+          Authorization: `Bearer ${this.config.apiToken}`,
+          Accept: "application/json",
+        },
+        cache: "no-store",
+      });
+    } catch (cause) {
+      throw new YouTrackServiceError("Could not reach YouTrack. Check the Base URL.", { cause });
+    }
+
+    if (!response.ok) {
+      const bodyText = await response.text().catch(() => "<failed to read response body>");
+      if (response.status === 401 || response.status === 403) {
+        throw new YouTrackServiceError("YouTrack rejected the API token.", {
+          status: response.status,
+          cause: bodyText,
+        });
+      }
+      throw new YouTrackServiceError(
+        `YouTrack rejected the request (HTTP ${response.status}). Check the Project and Login.`,
+        { status: response.status, cause: bodyText }
+      );
+    }
   }
 
   /**
-   * Tickets whose CURRENT status is DEV/STAGE/PROD Verified. The YouTrack
-   * query already filters server-side by status, but we re-check the
-   * returned status locally too (deriveVerifiedEnvironment) as a
-   * defense-in-depth double-check of the "always use current status"
-   * rule — if a query-syntax edge case ever let a non-matching ticket
-   * through, it gets filtered out here rather than shown incorrectly.
+   * Tickets assigned to `login`, in the configured project. `login` is
+   * optional only for the legacy whole-project dev-fallback path (see
+   * isDevFallbackConfigured) — every real per-user sync always passes it.
    */
-  async getVerifiedTickets(): Promise<VerifiedTicket[]> {
-    const query = `${this.projectScope()} ${this.config.stateFieldName}: {DEV Verified}, {STAGE Verified}, {PROD Verified}`;
+  async getAssignedTickets(login?: string): Promise<YouTrackTicket[]> {
+    const query = login
+      ? `${this.projectScope()} Assignee: {${login}}`
+      : this.projectScope();
+    return this.fetchIssues(query);
+  }
+
+  /** Tickets reported by `login` today, in the configured project. */
+  async getCreatedToday(login?: string): Promise<YouTrackTicket[]> {
+    const query = login
+      ? `${this.projectScope()} reporter: {${login}} created: Today`
+      : `${this.projectScope()} created: Today`;
+    return this.fetchIssues(query);
+  }
+
+  /**
+   * Tickets assigned to `login` whose CURRENT status is DEV/STAGE/PROD
+   * Verified — same identity as getAssignedTickets, since a verified
+   * ticket is one this QA engineer owns and has moved to Verified. The
+   * YouTrack query already filters server-side by status, but we
+   * re-check the returned status locally too (deriveVerifiedEnvironment)
+   * as a defense-in-depth double-check of the "always use current
+   * status" rule — if a query-syntax edge case ever let a non-matching
+   * ticket through, it gets filtered out here rather than shown
+   * incorrectly.
+   */
+  async getVerifiedTickets(login?: string): Promise<VerifiedTicket[]> {
+    const scope = login ? `${this.projectScope()} Assignee: {${login}}` : this.projectScope();
+    const query = `${scope} ${this.config.stateFieldName}: {DEV Verified}, {STAGE Verified}, {PROD Verified}`;
     const tickets = await this.fetchIssues(query);
 
     return tickets.reduce<VerifiedTicket[]>((verified, ticket) => {
@@ -159,11 +232,11 @@ export class YouTrackService {
    * valid State values in this project — doesn't blank out the other
    * two, which have nothing to do with it and may well have succeeded.
    */
-  async sync(): Promise<YouTrackSyncResult> {
+  async sync(login?: string): Promise<YouTrackSyncResult> {
     const [assignedResult, createdResult, verifiedResult] = await Promise.allSettled([
-      this.getAssignedTickets(),
-      this.getCreatedToday(),
-      this.getVerifiedTickets(),
+      this.getAssignedTickets(login),
+      this.getCreatedToday(login),
+      this.getVerifiedTickets(login),
     ]);
 
     const partialErrors: string[] = [];
@@ -220,7 +293,7 @@ export class YouTrackService {
         query,
         cause,
       });
-      throw new YouTrackServiceError("Could not reach YouTrack. Check YOUTRACK_BASE_URL.", {
+      throw new YouTrackServiceError("Could not reach YouTrack. Check your Base URL in Profile.", {
         cause,
       });
     }
@@ -235,19 +308,7 @@ export class YouTrackService {
         body: bodyText,
       });
 
-      if (response.status === 401 || response.status === 403) {
-        throw new YouTrackServiceError(
-          `YouTrack rejected the API token (HTTP ${response.status}).`,
-          {
-            status: response.status,
-            cause: bodyText,
-          }
-        );
-      }
-      throw new YouTrackServiceError(
-        `YouTrack request failed with status ${response.status}: ${bodyText.slice(0, 500)}`,
-        { status: response.status, cause: bodyText }
-      );
+      throw this.classifyErrorResponse(response.status, bodyText);
     }
 
     const json: unknown = await response.json();
@@ -264,5 +325,52 @@ export class YouTrackService {
     }
 
     return parsed.data.map((issue) => mapApiIssueToTicket(issue, this.config.stateFieldName));
+  }
+
+  /**
+   * Turns a non-OK response into a friendly, differentiated error.
+   * Status code covers the clear-cut cases (auth, rate limiting); for a
+   * 400 — which YouTrack uses for query errors like an unknown project
+   * or login — we fall back to a best-effort keyword scan of the error
+   * body, since YouTrack doesn't return a structured error code here.
+   * That scan only ever narrows the message shown to the user; it never
+   * changes what's logged, so the full detail is always available.
+   */
+  private classifyErrorResponse(status: number, bodyText: string): YouTrackServiceError {
+    if (status === 401 || status === 403) {
+      return new YouTrackServiceError(
+        "YouTrack rejected your API token. Update it in Profile.",
+        { status, cause: bodyText }
+      );
+    }
+    if (status === 429) {
+      return new YouTrackServiceError(
+        "YouTrack rate limit exceeded. Please wait a moment and try again.",
+        { status, cause: bodyText }
+      );
+    }
+    if (status === 400) {
+      const lowerBody = bodyText.toLowerCase();
+      if (lowerBody.includes("login") || lowerBody.includes("user")) {
+        return new YouTrackServiceError(
+          "YouTrack rejected your Login. Check it in Profile.",
+          { status, cause: bodyText }
+        );
+      }
+      if (lowerBody.includes("project")) {
+        return new YouTrackServiceError(
+          "YouTrack rejected your Project. Check it in Profile.",
+          { status, cause: bodyText }
+        );
+      }
+      return new YouTrackServiceError(
+        "YouTrack rejected the request. Check your Project and Login in Profile.",
+        { status, cause: bodyText }
+      );
+    }
+    return new YouTrackServiceError(
+      `YouTrack request failed with status ${status}: ${bodyText.slice(0, 500)}`,
+      { status, cause: bodyText }
+    );
   }
 }
