@@ -1,0 +1,249 @@
+/**
+ * Avenor design tokens.
+ *
+ * Two layers:
+ *  1. Static tokens (@theme) — typography, spacing, radius, shadow. Same
+ *     in light and dark mode, so they're declared once as plain values.
+ *  2. Color tokens (:root / .dark / prefers-color-scheme) — semantic
+ *     colors that swap between light and dark. Declared as plain custom
+ *     properties first, then re-exposed to Tailwind's utility generator
+ *     via `@theme inline`, which keeps the mapping "by reference" so a
+ *     runtime class change (e.g. a future dark-mode toggle) updates every
+ *     `bg-*`/`text-*`/`border-*` utility without a rebuild.
+ *
+ * Component code should always reach for the semantic names below
+ * (bg-surface, text-foreground, border-border, bg-primary, ...) rather
+ * than Tailwind's raw palette (bg-slate-100, bg-blue-600, ...). The raw
+ * palette still exists and is fine for one-off cases, but anything that
+ * should adapt to dark mode must go through a semantic token.
+ */
+
+@theme {
+  /* ---------------------------------------------------------------------
+   * Typography scale
+   * Font families are mapped below via @theme inline (they reference the
+   * next/font CSS variables set on <html> in app/layout.tsx).
+   * --------------------------------------------------------------------- */
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 1rem;
+  --text-base--line-height: 1.5rem;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.75rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 2rem;
+  --text-3xl: 1.875rem;
+  --text-3xl--line-height: 2.25rem;
+  --text-4xl: 2.25rem;
+  --text-4xl--line-height: 2.5rem;
+
+  /* ---------------------------------------------------------------------
+   * Spacing — base unit for every padding, margin, and gap utility
+   * (Tailwind v4 derives the whole numeric spacing scale from this one
+   * value).
+   * --------------------------------------------------------------------- */
+  --spacing: 0.25rem;
+
+  /* ---------------------------------------------------------------------
+   * Border radius scale
+   * --------------------------------------------------------------------- */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-full: 9999px;
+
+  /* ---------------------------------------------------------------------
+   * Elevation
+   * --------------------------------------------------------------------- */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+}
+
+/* ===========================================================================
+ * Color tokens — light mode (default)
+ * ========================================================================= */
+:root {
+  --background: #f8fafc; /* slate-50 */
+  --foreground: #0f172a; /* slate-900 */
+
+  --surface: #ffffff; /* card/panel background */
+  --muted: #f1f5f9; /* slate-100 — subtle bg: hover rows, soft panels */
+  --muted-foreground: #64748b; /* slate-500 — secondary/help text */
+
+  --border: #e2e8f0; /* slate-200 */
+  --border-strong: #cbd5e1; /* slate-300 */
+
+  --ring: #6366f1; /* indigo-500 — focus ring */
+
+  /*
+   * Semantic action/status colors.
+   * `*-foreground` is always paired with the *solid* fill and is verified
+   * >= 4.5:1 (WCAG AA, normal text) against white — that's why success/
+   * warning/info sit a shade darker (700) than primary/danger (600):
+   * emerald/amber/sky at 600 fall short of AA with white text, indigo/red
+   * at 600 already clear it. `*-subtle` pairs (light tint bg + 700-level
+   * text) are what Badge and inline status indicators should use by
+   * default — they read as less alarming than a solid fill and are the
+   * easiest combination to keep accessible.
+   */
+  --primary: #4f46e5; /* indigo-600 */
+  --primary-hover: #4338ca; /* indigo-700 */
+  --primary-foreground: #ffffff;
+  --primary-subtle: #eef2ff; /* indigo-50 */
+  --primary-subtle-foreground: #4338ca; /* indigo-700 */
+
+  --success: #047857; /* emerald-700 */
+  --success-foreground: #ffffff;
+  --success-subtle: #ecfdf5; /* emerald-50 */
+  --success-subtle-foreground: #047857; /* emerald-700 */
+
+  --warning: #b45309; /* amber-700 */
+  --warning-foreground: #ffffff;
+  --warning-subtle: #fffbeb; /* amber-50 */
+  --warning-subtle-foreground: #b45309; /* amber-700 */
+
+  --danger: #dc2626; /* red-600 */
+  --danger-hover: #b91c1c; /* red-700 */
+  --danger-foreground: #ffffff;
+  --danger-subtle: #fef2f2; /* red-50 */
+  --danger-subtle-foreground: #b91c1c; /* red-700 */
+
+  --info: #0369a1; /* sky-700 */
+  --info-foreground: #ffffff;
+  --info-subtle: #f0f9ff; /* sky-50 */
+  --info-subtle-foreground: #0369a1; /* sky-700 */
+}
+
+/* ===========================================================================
+ * Color tokens — dark mode
+ *
+ * Two selectors carry the same values on purpose:
+ *  - the media query gives dark mode "for free" today, based on OS
+ *    preference, with no toggle built yet;
+ *  - the explicit `.dark` class is inert until a toggle exists (none of
+ *    our code sets it yet) but means adding one later — e.g. next-themes
+ *    setting this class on <html> — requires no CSS changes here.
+ *
+ * `:root:not(.light)` lets a future explicit "light" class override the
+ * OS preference; `.dark` always wins regardless of OS preference.
+ * ========================================================================= */
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --background: #020617; /* slate-950 */
+    --foreground: #f8fafc; /* slate-50 */
+
+    --surface: #0f172a; /* slate-900 */
+    --muted: #1e293b; /* slate-800 */
+    --muted-foreground: #94a3b8; /* slate-400 */
+
+    --border: #1e293b; /* slate-800 */
+    --border-strong: #334155; /* slate-700 */
+
+    --ring: #818cf8; /* indigo-400 — brighter for visibility on dark bg */
+
+    --primary-subtle: #1e1b4b; /* indigo-950 */
+    --primary-subtle-foreground: #a5b4fc; /* indigo-300 */
+
+    --success-subtle: #022c22; /* emerald-950 */
+    --success-subtle-foreground: #6ee7b7; /* emerald-300 */
+
+    --warning-subtle: #451a03; /* amber-950 */
+    --warning-subtle-foreground: #fcd34d; /* amber-300 */
+
+    --danger-subtle: #450a0a; /* red-950 */
+    --danger-subtle-foreground: #fca5a5; /* red-300 */
+
+    --info-subtle: #082f49; /* sky-950 */
+    --info-subtle-foreground: #7dd3fc; /* sky-300 */
+
+    /* primary/success/warning/danger/info solid fills stay the same
+       shade as light mode — see note above the light-mode block. */
+  }
+}
+
+.dark {
+  --background: #020617;
+  --foreground: #f8fafc;
+
+  --surface: #0f172a;
+  --muted: #1e293b;
+  --muted-foreground: #94a3b8;
+
+  --border: #1e293b;
+  --border-strong: #334155;
+
+  --ring: #818cf8;
+
+  --primary-subtle: #1e1b4b;
+  --primary-subtle-foreground: #a5b4fc;
+
+  --success-subtle: #052e16;
+  --success-subtle-foreground: #86efac;
+
+  --warning-subtle: #451a03;
+  --warning-subtle-foreground: #fcd34d;
+
+  --danger-subtle: #450a0a;
+  --danger-subtle-foreground: #fca5a5;
+
+  --info-subtle: #082f49;
+  --info-subtle-foreground: #7dd3fc;
+}
+
+/* ===========================================================================
+ * Expose the above as Tailwind utilities (bg-background, text-foreground,
+ * border-border, bg-primary, text-primary-foreground, ...). `inline` keeps
+ * these as references to the custom properties above rather than baking in
+ * a static value, which is what lets the .dark class / media query swap
+ * take effect without a rebuild.
+ * ========================================================================= */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --color-surface: var(--surface);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-ring: var(--ring);
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-subtle: var(--primary-subtle);
+  --color-primary-subtle-foreground: var(--primary-subtle-foreground);
+
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-success-subtle: var(--success-subtle);
+  --color-success-subtle-foreground: var(--success-subtle-foreground);
+
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-warning-subtle-foreground: var(--warning-subtle-foreground);
+
+  --color-danger: var(--danger);
+  --color-danger-hover: var(--danger-hover);
+  --color-danger-foreground: var(--danger-foreground);
+  --color-danger-subtle: var(--danger-subtle);
+  --color-danger-subtle-foreground: var(--danger-subtle-foreground);
+
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-subtle: var(--info-subtle);
+  --color-info-subtle-foreground: var(--info-subtle-foreground);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
