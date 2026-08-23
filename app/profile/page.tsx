@@ -10,7 +10,21 @@ import { SlackIntegrationCard } from "@/features/profile/components/SlackIntegra
 import { YouTrackIntegrationCard } from "@/features/profile/components/YouTrackIntegrationCard";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentUserStatus } from "@/lib/user-status";
-import { UserIntegrationsService } from "@/services/user-integrations.service";
+import {
+  UserIntegrationsService,
+  type SlackIntegrationStatus,
+  type YouTrackIntegrationStatus,
+} from "@/services/user-integrations.service";
+
+const DISCONNECTED_YOUTRACK_STATUS: YouTrackIntegrationStatus = {
+  connected: false,
+  baseUrl: null,
+  project: null,
+  stateField: null,
+  login: null,
+};
+
+const DISCONNECTED_SLACK_STATUS: SlackIntegrationStatus = { connected: false };
 
 export default async function ProfilePage() {
   const status = await getCurrentUserStatus();
@@ -20,9 +34,19 @@ export default async function ProfilePage() {
 
   const supabase = await createClient();
   const service = new UserIntegrationsService(supabase, status.userId);
+  // Reading integration status is not allowed to take the whole page down —
+  // a missing table/column (e.g. supabase/schema.sql not yet applied) or a
+  // transient DB error should render as "Not Connected", not a 500. This
+  // mirrors how getCurrentUserStatus() already treats the same query.
   const [youtrackStatus, slackStatus] = await Promise.all([
-    service.getYouTrackStatus(),
-    service.getSlackStatus(),
+    service.getYouTrackStatus().catch((error: unknown) => {
+      console.error("Profile: failed to load YouTrack integration status", error);
+      return DISCONNECTED_YOUTRACK_STATUS;
+    }),
+    service.getSlackStatus().catch((error: unknown) => {
+      console.error("Profile: failed to load Slack integration status", error);
+      return DISCONNECTED_SLACK_STATUS;
+    }),
   ]);
 
   return (
