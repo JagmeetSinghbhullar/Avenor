@@ -4,9 +4,9 @@ import { type NextRequest, NextResponse } from "next/server";
 /**
  * Refreshes the Supabase auth session cookie on every request (required by
  * @supabase/ssr — see lib/supabase/server.ts) and gates every route except
- * the public homepage, the auth pages, the legal pages, and the local
- * dev-preview tool behind a signed-in session. Named `proxy` (not
- * `middleware`) per Next.js 16 — see
+ * the public homepage, the auth pages, the legal pages, Google
+ * verification files, and the local dev-preview tool behind a signed-in
+ * session. Named `proxy` (not `middleware`) per Next.js 16 — see
  * node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/proxy.md.
  */
 export async function proxy(request: NextRequest) {
@@ -54,8 +54,21 @@ export async function proxy(request: NextRequest) {
   // visitor straight to /dashboard, so this only ever actually renders
   // for a signed-out visitor.)
   const isPublicHome = pathname === "/";
+  // Google site-ownership verification files (e.g.
+  // /google64f569131d515c07.html), served as static files from public/.
+  // The matcher below only excludes image extensions, not .html, so
+  // these still reach this function — without this check they'd fall
+  // through to the redirect just like any other unrecognized path.
+  const isGoogleVerificationFile = pathname.startsWith("/google") && pathname.endsWith(".html");
 
-  if (!user && !isAuthPage && !isDevPreview && !isLegalPage && !isPublicHome) {
+  if (
+    !user &&
+    !isAuthPage &&
+    !isDevPreview &&
+    !isLegalPage &&
+    !isPublicHome &&
+    !isGoogleVerificationFile
+  ) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("next", pathname);
     return NextResponse.redirect(loginUrl);
