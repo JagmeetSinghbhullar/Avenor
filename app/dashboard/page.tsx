@@ -1,4 +1,4 @@
-import DashboardClient from "@/app/(dashboard)/DashboardClient";
+import DashboardClient from "@/app/dashboard/DashboardClient";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentUserStatus } from "@/lib/user-status";
 import { SupabaseService } from "@/services/supabase.service";

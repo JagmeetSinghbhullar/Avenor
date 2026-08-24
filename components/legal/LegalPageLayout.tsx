@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { Footer } from "@/components/layout/Footer";
 import { PageHeader } from "@/components/ui/PageHeader";
 
 export interface LegalPageLayoutProps {
@@ -17,7 +18,7 @@ export interface LegalPageLayoutProps {
  */
 export function LegalPageLayout({ title, lastUpdated, children }: LegalPageLayoutProps) {
   return (
-    <div className="bg-background min-h-screen">
+    <div className="bg-background flex min-h-screen flex-col">
       <header className="border-border border-b">
         <div className="mx-auto flex max-w-3xl items-center gap-2.5 px-4 py-4 sm:px-6">
           <Link href="/" className="flex items-center gap-2.5">
@@ -37,24 +38,12 @@ export function LegalPageLayout({ title, lastUpdated, children }: LegalPageLayou
         </div>
       </header>
 
-      <main className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-8 sm:px-6 sm:py-10">
+      <main className="mx-auto flex max-w-3xl flex-1 flex-col gap-6 px-4 py-8 sm:px-6 sm:py-10">
         <PageHeader title={title} description={`Last Updated: ${lastUpdated}`} />
         {children}
-        <nav aria-label="Legal pages" className="flex flex-wrap gap-4 pt-2 text-sm">
-          <Link
-            href="/privacy"
-            className="text-muted-foreground hover:text-foreground underline underline-offset-2"
-          >
-            Privacy Policy
-          </Link>
-          <Link
-            href="/terms"
-            className="text-muted-foreground hover:text-foreground underline underline-offset-2"
-          >
-            Terms of Service
-          </Link>
-        </nav>
       </main>
+
+      <Footer />
     </div>
   );
 }

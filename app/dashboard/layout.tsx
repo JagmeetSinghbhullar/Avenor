@@ -7,8 +7,8 @@ import { getCurrentUserStatus } from "@/lib/user-status";
 /**
  * Shell for the dashboard specifically (not /profile — see
  * app/profile/layout.tsx, which shares AppShell but not this gate).
- * A route group ("(dashboard)") so this layout applies without adding a
- * path segment — the dashboard page itself still lives at "/".
+ * Lives at /dashboard — "/" is the public marketing homepage
+ * (app/page.tsx), which isn't gated at all.
  *
  * A Server Component (not "use client") specifically so it can read the
  * session via lib/user-status.ts and hand a plain, serializable user

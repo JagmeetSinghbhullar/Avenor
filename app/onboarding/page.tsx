@@ -13,9 +13,9 @@ import { getCurrentUserStatus } from "@/lib/user-status";
  * which disables just the Send Report action until Slack is connected
  * rather than gating the whole dashboard on it.
  *
- * A standalone route (not nested under the (dashboard) group), styled
- * like /login (centered card, no sidebar/topbar chrome) since it's the
- * same kind of focused, single-purpose setup screen.
+ * A standalone route (not nested under app/dashboard), styled like
+ * /login (centered card, no sidebar/topbar chrome) since it's the same
+ * kind of focused, single-purpose setup screen.
  */
 export default async function OnboardingPage() {
   const status = await getCurrentUserStatus();
@@ -25,7 +25,7 @@ export default async function OnboardingPage() {
   }
 
   if (status.youtrackConnected) {
-    redirect("/");
+    redirect("/dashboard");
   }
 
   const firstName = status.name.split(" ")[0];

@@ -4,8 +4,9 @@ import { type NextRequest, NextResponse } from "next/server";
 /**
  * Refreshes the Supabase auth session cookie on every request (required by
  * @supabase/ssr — see lib/supabase/server.ts) and gates every route except
- * the auth pages and the local dev-preview tool behind a signed-in
- * session. Named `proxy` (not `middleware`) per Next.js 16 — see
+ * the public homepage, the auth pages, the legal pages, and the local
+ * dev-preview tool behind a signed-in session. Named `proxy` (not
+ * `middleware`) per Next.js 16 — see
  * node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/proxy.md.
  */
 export async function proxy(request: NextRequest) {
@@ -47,8 +48,14 @@ export async function proxy(request: NextRequest) {
   // session for the Google OAuth consent screen, and for Google's own
   // crawler to index them.
   const isLegalPage = pathname === "/privacy" || pathname === "/terms";
+  // The public marketing homepage. Google's OAuth verification requires
+  // this to be reachable without a session — the authenticated app lives
+  // at /dashboard instead. (app/page.tsx redirects an already-signed-in
+  // visitor straight to /dashboard, so this only ever actually renders
+  // for a signed-out visitor.)
+  const isPublicHome = pathname === "/";
 
-  if (!user && !isAuthPage && !isDevPreview && !isLegalPage) {
+  if (!user && !isAuthPage && !isDevPreview && !isLegalPage && !isPublicHome) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("next", pathname);
     return NextResponse.redirect(loginUrl);
@@ -57,7 +64,7 @@ export async function proxy(request: NextRequest) {
   // Already signed in — don't show the login page again (e.g. after
   // navigating back in browser history).
   if (user && pathname === "/login") {
-    return NextResponse.redirect(new URL("/", request.url));
+    return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
   return supabaseResponse;
