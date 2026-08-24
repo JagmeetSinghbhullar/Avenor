@@ -147,37 +147,12 @@ export class YouTrackService {
    * the saved credentials will work, not a separate, narrower check.
    */
   async testConnection(login: string): Promise<void> {
-    const url = new URL(`${this.config.baseUrl}/api/issues`);
-    url.searchParams.set("query", `${this.projectScope()} for: {${login}}`);
-    url.searchParams.set("fields", "idReadable");
-    url.searchParams.set("$top", "1");
-
-    let response: Response;
-    try {
-      response = await fetch(url.toString(), {
-        headers: {
-          Authorization: `Bearer ${this.config.apiToken}`,
-          Accept: "application/json",
-        },
-        cache: "no-store",
-      });
-    } catch (cause) {
-      throw new YouTrackServiceError("Could not reach YouTrack. Check the Base URL.", { cause });
-    }
-
-    if (!response.ok) {
-      const bodyText = await response.text().catch(() => "<failed to read response body>");
-      if (response.status === 401 || response.status === 403) {
-        throw new YouTrackServiceError("YouTrack rejected the API token.", {
-          status: response.status,
-          cause: bodyText,
-        });
-      }
-      throw new YouTrackServiceError(
-        `YouTrack rejected the request (HTTP ${response.status}). Check the Project and Login.`,
-        { status: response.status, cause: bodyText }
-      );
-    }
+    // Reuses fetchIssues rather than duplicating its own fetch/error
+    // handling — this was previously a separate inline implementation
+    // that silently dropped YouTrack's actual error body instead of
+    // logging it (unlike every other query here), which made a failed
+    // test undiagnosable. $top=1 keeps this a cheap check.
+    await this.fetchIssues(`${this.projectScope()} for: {${login}}`, 1);
   }
 
   /**
@@ -268,11 +243,11 @@ export class YouTrackService {
     return `project: {${this.config.projectId}}`;
   }
 
-  private async fetchIssues(query: string): Promise<YouTrackTicket[]> {
+  private async fetchIssues(query: string, topOverride?: number): Promise<YouTrackTicket[]> {
     const url = new URL(`${this.config.baseUrl}/api/issues`);
     url.searchParams.set("query", query);
     url.searchParams.set("fields", ISSUE_FIELDS);
-    url.searchParams.set("$top", String(MAX_RESULTS));
+    url.searchParams.set("$top", String(topOverride ?? MAX_RESULTS));
 
     // The token lives in the Authorization header, never in the URL, so
     // logging the full URL here can't leak it.
@@ -350,21 +325,23 @@ export class YouTrackService {
       );
     }
     if (status === 400) {
+      const reason = extractYouTrackErrorReason(bodyText);
+      const suffix = reason ? ` (${reason})` : "";
       const lowerBody = bodyText.toLowerCase();
       if (lowerBody.includes("login") || lowerBody.includes("user")) {
         return new YouTrackServiceError(
-          "YouTrack rejected your Login. Check it in Profile.",
+          `YouTrack rejected your Login. Check it in Profile.${suffix}`,
           { status, cause: bodyText }
         );
       }
       if (lowerBody.includes("project")) {
         return new YouTrackServiceError(
-          "YouTrack rejected your Project. Check it in Profile.",
+          `YouTrack rejected your Project. Check it in Profile.${suffix}`,
           { status, cause: bodyText }
         );
       }
       return new YouTrackServiceError(
-        "YouTrack rejected the request. Check your Project and Login in Profile.",
+        `YouTrack rejected the request. Check your Project and Login in Profile.${suffix}`,
         { status, cause: bodyText }
       );
     }
@@ -373,4 +350,27 @@ export class YouTrackService {
       { status, cause: bodyText }
     );
   }
+}
+
+/**
+ * Best-effort extraction of a short, human-readable reason from a
+ * YouTrack error response — YouTrack usually returns JSON with an
+ * `error_description` (or similar) field, but this only ever narrows an
+ * already-friendly message; if parsing fails or the field is missing,
+ * callers just show their own generic message instead.
+ */
+function extractYouTrackErrorReason(bodyText: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(bodyText);
+    if (typeof parsed === "object" && parsed !== null) {
+      const record = parsed as Record<string, unknown>;
+      const reason = record.error_description ?? record.error_developer_message ?? record.error;
+      if (typeof reason === "string" && reason.trim()) {
+        return reason.trim().slice(0, 200);
+      }
+    }
+  } catch {
+    // Not JSON — fall through.
+  }
+  return null;
 }

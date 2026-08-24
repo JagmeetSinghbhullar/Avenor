@@ -36,6 +36,13 @@ function LoginForm() {
       provider: "google",
       options: {
         redirectTo: callbackUrl.toString(),
+        // Without this, Google silently reuses whichever of the
+        // browser's own Google sessions is active, skipping the account
+        // picker entirely — so a user who signed out of Avenor (which
+        // only clears our session, not Google's) and wants to sign back
+        // in with a different Google account never gets the chance to
+        // choose. This forces the picker to show every time.
+        queryParams: { prompt: "select_account" },
       },
     });
     if (signInError) {

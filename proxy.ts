@@ -43,8 +43,12 @@ export async function proxy(request: NextRequest) {
   // Never committed / not part of the production app — the user's own
   // local component-verification tool, shows no real data.
   const isDevPreview = pathname === "/dev-preview" || pathname.startsWith("/dev-preview/");
+  // Static legal pages — required to be publicly reachable without a
+  // session for the Google OAuth consent screen, and for Google's own
+  // crawler to index them.
+  const isLegalPage = pathname === "/privacy" || pathname === "/terms";
 
-  if (!user && !isAuthPage && !isDevPreview) {
+  if (!user && !isAuthPage && !isDevPreview && !isLegalPage) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("next", pathname);
     return NextResponse.redirect(loginUrl);
