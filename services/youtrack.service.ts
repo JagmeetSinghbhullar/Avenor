@@ -7,21 +7,30 @@ import type {
 } from "@/types/youtrack";
 
 /**
- * A ticket counts as verified ONLY if its CURRENT status is one of these.
- * We never look at ticket history — a ticket that has moved off one of
- * these statuses (back to To Do / In Progress / Reopened, or anywhere
- * else) simply won't appear in the list the next time this map is
- * consulted, because it's applied fresh to the live status on every sync.
+ * A ticket counts as verified on a given environment when its State
+ * field has EVER made this specific transition at some point in its
+ * history — not based on where it currently sits. E.g. a ticket that
+ * moved "Dev" -> "Ready for Stage" is DEV-verified from that moment on,
+ * even after it later moves through Stage/Prod/Verified — those are
+ * separate, independently-tracked transitions, which is why a ticket can
+ * end up verified on more than one environment at once (see
+ * VerifiedTicket in types/youtrack.ts).
+ *
+ * These exact strings were confirmed against a real project's actual
+ * issue activity history (GET /api/issues/{id}/activities?categories=
+ * CustomFieldCategory), not guessed — "Dev" (not "In DEV") and "Ready
+ * For Prod" (capital F/P, not "Ready for Prod") both came from real
+ * transition data. Compared case-insensitively (see computeVerifiedTickets)
+ * so a future minor casing tweak in YouTrack's workflow config doesn't
+ * silently zero this out again the way the original casing mismatch did.
  */
-const VERIFIED_STATUS_TO_ENVIRONMENT: Record<string, VerifiedEnvironment> = {
-  "DEV Verified": "DEV",
-  "STAGE Verified": "STAGE",
-  "PROD Verified": "PROD",
+const VERIFICATION_TRANSITIONS: Record<VerifiedEnvironment, { from: string; to: string }> = {
+  DEV: { from: "Dev", to: "Ready for Stage" },
+  STAGE: { from: "Stage", to: "Ready For Prod" },
+  PROD: { from: "Prod", to: "Verified" },
 };
 
-export function deriveVerifiedEnvironment(status: string): VerifiedEnvironment | null {
-  return VERIFIED_STATUS_TO_ENVIRONMENT[status] ?? null;
-}
+const VERIFICATION_ENVIRONMENTS = Object.keys(VERIFICATION_TRANSITIONS) as VerifiedEnvironment[];
 
 export class YouTrackServiceError extends Error {
   readonly status: number;
@@ -96,6 +105,43 @@ type YouTrackApiIssue = z.infer<typeof youTrackApiIssueSchema>;
 
 const ISSUE_FIELDS = "idReadable,summary,created,customFields(name,value(name,login,fullName))";
 const MAX_RESULTS = 200;
+
+// --- Issue activity history (for transition-based verification) -----------
+
+/**
+ * YouTrack's REST API models a custom field's added/removed value as an
+ * array for every field, including single-value enum fields like State —
+ * but this is accepted defensively as either an array or a bare object,
+ * since that specific detail isn't confirmed for every YouTrack version
+ * and getting it wrong would otherwise silently zero out every result
+ * rather than fail loudly.
+ */
+const activityValueSchema = z.object({ name: z.string().optional() }).nullable();
+const activityValueOrArraySchema = z
+  .union([activityValueSchema, z.array(activityValueSchema)])
+  .nullable()
+  .optional();
+
+const activityItemSchema = z.object({
+  field: z.object({ name: z.string().optional() }).nullable().optional(),
+  added: activityValueOrArraySchema,
+  removed: activityValueOrArraySchema,
+});
+
+const activityItemListSchema = z.array(activityItemSchema);
+
+type ActivityItem = z.infer<typeof activityItemSchema>;
+
+/** Normalizes the added/removed union above down to a single name, whichever shape the API actually returned. */
+function firstActivityValueName(value: ActivityItem["added"]): string {
+  if (Array.isArray(value)) {
+    return value[0]?.name ?? "";
+  }
+  return value?.name ?? "";
+}
+
+const ACTIVITY_FIELDS = "field(name),added(name),removed(name)";
+const ACTIVITY_BATCH_SIZE = 10;
 
 function mapApiIssueToTicket(issue: YouTrackApiIssue, stateFieldName: string): YouTrackTicket {
   const stateField = issue.customFields.find((field) => field.name === stateFieldName);
@@ -176,42 +222,60 @@ export class YouTrackService {
   }
 
   /**
-   * Tickets assigned to `login` whose CURRENT status is DEV/STAGE/PROD
-   * Verified — same identity as getAssignedTickets, since a verified
-   * ticket is one this QA engineer owns and has moved to Verified. The
-   * YouTrack query already filters server-side by status, but we
-   * re-check the returned status locally too (deriveVerifiedEnvironment)
-   * as a defense-in-depth double-check of the "always use current
-   * status" rule — if a query-syntax edge case ever let a non-matching
-   * ticket through, it gets filtered out here rather than shown
-   * incorrectly.
+   * ALL tickets in the configured project — deliberately not scoped to
+   * any assignee. Verification counts are meant to reflect the whole
+   * project's QA status regardless of who's assigned each ticket, unlike
+   * getAssignedTickets/getCreatedToday, which stay per-user by design.
+   * Paginated (not a single fetchIssues call) because MAX_RESULTS (200)
+   * is too small to safely assume covers an entire project — silently
+   * truncating here would silently undercount every environment.
    */
-  async getVerifiedTickets(login?: string): Promise<VerifiedTicket[]> {
-    const scope = login ? `${this.projectScope()} Assignee: {${login}}` : this.projectScope();
-    const query = `${scope} ${this.config.stateFieldName}: {DEV Verified}, {STAGE Verified}, {PROD Verified}`;
-    const tickets = await this.fetchIssues(query);
-
-    return tickets.reduce<VerifiedTicket[]>((verified, ticket) => {
-      const verifiedEnvironment = deriveVerifiedEnvironment(ticket.status);
-      if (verifiedEnvironment) {
-        verified.push({ ...ticket, verifiedEnvironment });
+  private async getAllProjectTickets(): Promise<YouTrackTicket[]> {
+    const all: YouTrackTicket[] = [];
+    let skip = 0;
+    for (;;) {
+      const page = await this.fetchIssues(this.projectScope(), MAX_RESULTS, skip);
+      all.push(...page);
+      if (page.length < MAX_RESULTS) {
+        break;
       }
-      return verified;
-    }, []);
+      skip += MAX_RESULTS;
+    }
+    return all;
   }
 
   /**
-   * Runs the three queries independently (Promise.allSettled, not
-   * Promise.all) so a single one failing — e.g. the verified-tickets
-   * query being rejected because the configured status names aren't
-   * valid State values in this project — doesn't blank out the other
-   * two, which have nothing to do with it and may well have succeeded.
+   * Every ticket in the configured project that has made at least one of
+   * the DEV/STAGE/PROD verification transitions (see
+   * VERIFICATION_TRANSITIONS) at any point in its history — across the
+   * whole project, not just tickets assigned to the signed-in user (see
+   * getAllProjectTickets). Requires one activity-history request per
+   * ticket in the project (fetched in small batches — see
+   * computeVerifiedTickets), so this can be slow/expensive for a large
+   * project — see the note on sync().
+   */
+  async getVerifiedTickets(): Promise<VerifiedTicket[]> {
+    const tickets = await this.getAllProjectTickets();
+    return this.computeVerifiedTickets(tickets);
+  }
+
+  /**
+   * Assigned-tickets and created-today stay scoped to `login` and run
+   * independently (Promise.allSettled) so one failing doesn't blank out
+   * the other. Verified tickets are project-wide (see
+   * getAllProjectTickets) and run as a third, separate step — NOT scoped
+   * to `login` at all, and not derived from the assigned-tickets list
+   * the way it used to be, since "verified" is no longer a per-user
+   * concept. This can mean one activity-history request per ticket in
+   * the entire project on every sync, which may be slow for a large
+   * project — consider this a known cost of "every ticket, not just
+   * mine" rather than an oversight.
    */
   async sync(login?: string): Promise<YouTrackSyncResult> {
     const [assignedResult, createdResult, verifiedResult] = await Promise.allSettled([
       this.getAssignedTickets(login),
       this.getCreatedToday(login),
-      this.getVerifiedTickets(login),
+      this.getVerifiedTickets(),
     ]);
 
     const partialErrors: string[] = [];
@@ -226,6 +290,140 @@ export class YouTrackService {
       syncedAt: new Date().toISOString(),
       partialErrors: partialErrors.length > 0 ? partialErrors : undefined,
     };
+  }
+
+  /**
+   * Classifies each of `tickets` by fetching its State-field change
+   * history and checking it against every entry in VERIFICATION_TRANSITIONS
+   * independently, so a ticket can come back verified on more than one
+   * environment. Processed in small batches (not one unbounded
+   * Promise.all) to avoid bursting YouTrack's rate limit — `tickets` is
+   * now the whole project, so this can mean hundreds of individual
+   * activity-history requests on a large project. A single ticket's
+   * activity fetch failing is logged and treated as "no transitions
+   * found" for that ticket only — it never fails the whole computation
+   * (see fetchStateTransitions).
+   */
+  private async computeVerifiedTickets(
+    tickets: readonly YouTrackTicket[]
+  ): Promise<VerifiedTicket[]> {
+    console.log(
+      `[YouTrack Verify] Checking ${tickets.length} project ticket(s) for verification transitions: ${tickets.map((t) => t.id).join(", ") || "(none)"}`
+    );
+
+    const verified: VerifiedTicket[] = [];
+
+    for (let i = 0; i < tickets.length; i += ACTIVITY_BATCH_SIZE) {
+      const batch = tickets.slice(i, i + ACTIVITY_BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batch.map(async (ticket) => {
+          const transitions = await this.fetchStateTransitions(ticket.id);
+          console.log(
+            `[YouTrack Verify] ${ticket.id}: detected transitions -> ` +
+              (transitions.length > 0
+                ? transitions.map((t) => `"${t.from}" -> "${t.to}"`).join(", ")
+                : "(none)")
+          );
+
+          const verifiedEnvironments = VERIFICATION_ENVIRONMENTS.filter((env) => {
+            const { from, to } = VERIFICATION_TRANSITIONS[env];
+            return transitions.some(
+              (t) =>
+                t.from.toLowerCase() === from.toLowerCase() &&
+                t.to.toLowerCase() === to.toLowerCase()
+            );
+          });
+          console.log(
+            `[YouTrack Verify] ${ticket.id}: verified buckets -> [${verifiedEnvironments.join(", ") || "none"}]`
+          );
+
+          return verifiedEnvironments.length > 0 ? { ...ticket, verifiedEnvironments } : null;
+        })
+      );
+      for (const result of batchResults) {
+        if (result) {
+          verified.push(result);
+        }
+      }
+    }
+
+    const finalCounts = {
+      DEV: verified.filter((t) => t.verifiedEnvironments.includes("DEV")).length,
+      STAGE: verified.filter((t) => t.verifiedEnvironments.includes("STAGE")).length,
+      PROD: verified.filter((t) => t.verifiedEnvironments.includes("PROD")).length,
+    };
+    console.log(
+      `[YouTrack Verify] Final counts — DEV: ${finalCounts.DEV}, STAGE: ${finalCounts.STAGE}, PROD: ${finalCounts.PROD}`
+    );
+
+    return verified;
+  }
+
+  /**
+   * The configured State field's full added/removed change history for
+   * one issue, oldest and newest transitions both included (order doesn't
+   * matter to the caller — it only checks whether a specific from/to pair
+   * occurred at all). Failures here are logged and return an empty list
+   * rather than throwing, since one ticket's history being unreachable
+   * shouldn't blank out verification for every other ticket in the sync.
+   */
+  private async fetchStateTransitions(
+    issueId: string
+  ): Promise<Array<{ from: string; to: string }>> {
+    const url = new URL(`${this.config.baseUrl}/api/issues/${issueId}/activities`);
+    url.searchParams.set("categories", "CustomFieldCategory");
+    url.searchParams.set("fields", ACTIVITY_FIELDS);
+    url.searchParams.set("$top", "100");
+
+    const requestUrl = url.toString();
+
+    let response: Response;
+    try {
+      response = await fetch(requestUrl, {
+        headers: {
+          Authorization: `Bearer ${this.config.apiToken}`,
+          Accept: "application/json",
+        },
+        cache: "no-store",
+      });
+    } catch (cause) {
+      console.error("YouTrackService: network error fetching issue activities", {
+        url: requestUrl,
+        issueId,
+        cause,
+      });
+      return [];
+    }
+
+    if (!response.ok) {
+      const bodyText = await response.text().catch(() => "<failed to read response body>");
+      console.error("YouTrackService: failed to fetch issue activities", {
+        url: requestUrl,
+        issueId,
+        status: response.status,
+        body: bodyText,
+      });
+      return [];
+    }
+
+    const json: unknown = await response.json();
+    const parsed = activityItemListSchema.safeParse(json);
+    if (!parsed.success) {
+      console.error("YouTrackService: activities response failed schema validation", {
+        url: requestUrl,
+        issueId,
+        issues: parsed.error.issues,
+      });
+      return [];
+    }
+
+    return parsed.data
+      .filter((item) => item.field?.name === this.config.stateFieldName)
+      .map((item) => ({
+        from: firstActivityValueName(item.removed),
+        to: firstActivityValueName(item.added),
+      }))
+      .filter((transition) => transition.from && transition.to);
   }
 
   /** Extracts a settled query's value, logging + recording a summary if it failed rather than throwing. */
@@ -243,11 +441,18 @@ export class YouTrackService {
     return `project: {${this.config.projectId}}`;
   }
 
-  private async fetchIssues(query: string, topOverride?: number): Promise<YouTrackTicket[]> {
+  private async fetchIssues(
+    query: string,
+    topOverride?: number,
+    skipOverride?: number
+  ): Promise<YouTrackTicket[]> {
     const url = new URL(`${this.config.baseUrl}/api/issues`);
     url.searchParams.set("query", query);
     url.searchParams.set("fields", ISSUE_FIELDS);
     url.searchParams.set("$top", String(topOverride ?? MAX_RESULTS));
+    if (skipOverride) {
+      url.searchParams.set("$skip", String(skipOverride));
+    }
 
     // The token lives in the Authorization header, never in the URL, so
     // logging the full URL here can't leak it.

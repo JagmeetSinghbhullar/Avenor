@@ -140,6 +140,18 @@ export default function DashboardClient({
 
   const totalFlowsAvailable = TOTAL_SELECTABLE_FLOWS + draft.manualFlows.length;
 
+  // A ticket can be verified on more than one environment at once (see
+  // VerifiedTicket), so these counts overlap by design — they're not a
+  // three-way split of one total.
+  const verifiedCounts = useMemo(() => {
+    const tickets = data?.verifiedTickets ?? [];
+    return {
+      dev: tickets.filter((ticket) => ticket.verifiedEnvironments.includes("DEV")).length,
+      stage: tickets.filter((ticket) => ticket.verifiedEnvironments.includes("STAGE")).length,
+      prod: tickets.filter((ticket) => ticket.verifiedEnvironments.includes("PROD")).length,
+    };
+  }, [data]);
+
   return (
     <div className="flex flex-col gap-8">
       <PageHeader
@@ -181,13 +193,29 @@ export default function DashboardClient({
         </div>
       )}
 
-      <section className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+      <section className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-8">
         <SummaryCard
-          label="Verified Tickets"
-          value={data?.verifiedTickets.length ?? "—"}
-          description="Current status in DEV, STAGE or PROD verified"
+          label="DEV Verified"
+          value={data ? verifiedCounts.dev : "—"}
+          description="Moved In DEV → Ready for Stage"
           icon={<ShieldCheck className="h-4.5 w-4.5" strokeWidth={2} />}
-          iconClassName="bg-violet-50 text-violet-600"
+          iconClassName="bg-sky-50 text-sky-600"
+          isLoading={isLoading && !data}
+        />
+        <SummaryCard
+          label="STAGE Verified"
+          value={data ? verifiedCounts.stage : "—"}
+          description="Moved Stage → Ready for Prod"
+          icon={<ShieldCheck className="h-4.5 w-4.5" strokeWidth={2} />}
+          iconClassName="bg-amber-50 text-amber-600"
+          isLoading={isLoading && !data}
+        />
+        <SummaryCard
+          label="PROD Verified"
+          value={data ? verifiedCounts.prod : "—"}
+          description="Moved Prod → Verified"
+          icon={<ShieldCheck className="h-4.5 w-4.5" strokeWidth={2} />}
+          iconClassName="bg-emerald-50 text-emerald-600"
           isLoading={isLoading && !data}
         />
         <SummaryCard

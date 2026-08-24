@@ -26,9 +26,13 @@ const COLUMNS: readonly TicketsTableColumn<VerifiedTicket>[] = [
   {
     header: "Environment",
     render: (ticket) => (
-      <Badge variant={ENVIRONMENT_BADGE_VARIANT[ticket.verifiedEnvironment]}>
-        {ticket.verifiedEnvironment}
-      </Badge>
+      <div className="flex flex-wrap gap-1.5">
+        {ticket.verifiedEnvironments.map((environment) => (
+          <Badge key={environment} variant={ENVIRONMENT_BADGE_VARIANT[environment]}>
+            {environment}
+          </Badge>
+        ))}
+      </div>
     ),
   },
   {
@@ -52,7 +56,7 @@ export function VerifiedTicketsSection({ tickets, isLoading }: VerifiedTicketsSe
         <SectionHeader
           as="h3"
           title="Verified Tickets"
-          description="Current status is DEV, STAGE, or PROD Verified"
+          description="Has passed DEV, STAGE, and/or PROD verification"
           icon={<ShieldCheck className="h-4.5 w-4.5" strokeWidth={2} />}
           iconClassName="bg-violet-50 text-violet-600"
           className="border-b-0 pb-0"

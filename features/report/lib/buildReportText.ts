@@ -32,7 +32,7 @@ export function buildReportText(content: ReportContent): string {
   } else {
     for (const ticket of content.verifiedTickets) {
       lines.push(
-        `• ${ticket.id} — ${ticket.summary} (${ticket.verifiedEnvironment}) — ${ticket.assignee ?? "Unassigned"}`
+        `• ${ticket.id} — ${ticket.summary} (${ticket.verifiedEnvironments.join(", ")}) — ${ticket.assignee ?? "Unassigned"}`
       );
     }
   }

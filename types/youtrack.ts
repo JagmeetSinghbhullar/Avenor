@@ -17,14 +17,18 @@ export interface YouTrackTicket {
 }
 
 /**
- * A YouTrackTicket whose CURRENT status is one of DEV/STAGE/PROD Verified.
- * `verifiedEnvironment` is derived from `status` at fetch time — see
- * deriveVerifiedEnvironment in services/youtrack.service.ts. If the ticket
- * moves off a Verified status, the next sync simply won't include it here
- * anymore; nothing about this shape depends on history.
+ * A YouTrackTicket that has, at some point in its history, made a
+ * specific QA-verification state transition for one or more
+ * environments (e.g. "In DEV" -> "Ready for Stage" counts as verified on
+ * DEV) — see computeVerifiedTickets in services/youtrack.service.ts.
+ * Unlike a check against the ticket's current status, this is based on
+ * transition history, so a ticket can be verified on more than one
+ * environment at once (e.g. it passed DEV verification earlier and has
+ * since also passed STAGE verification) — hence an array here, not a
+ * single value.
  */
 export interface VerifiedTicket extends YouTrackTicket {
-  readonly verifiedEnvironment: VerifiedEnvironment;
+  readonly verifiedEnvironments: readonly VerifiedEnvironment[];
 }
 
 export interface YouTrackSyncResult {
