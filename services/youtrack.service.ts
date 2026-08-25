@@ -79,17 +79,22 @@ export function isDevFallbackConfigured(): boolean {
 
 // --- Raw YouTrack REST API response shape (internal only) -----------------
 
-const youTrackFieldValueSchema = z
-  .object({
-    name: z.string().optional(),
-    login: z.string().optional(),
-    fullName: z.string().optional(),
-  })
-  .nullable();
-
+/**
+ * A custom field's `value` shape depends entirely on the field's type —
+ * an object with `name`/`login`/`fullName` for State/Assignee/enum
+ * fields (the ones this app actually reads), but e.g. a raw Unix
+ * timestamp NUMBER for a DateIssueCustomField ("Due Date"), confirmed
+ * against this project's real data. customFields includes every custom
+ * field defined on the project, not just the ones we care about, so this
+ * is deliberately unvalidated here — mapApiIssueToTicket only ever reads
+ * a string out of it via stringFieldValue, which safely returns
+ * undefined for any shape (number, boolean, object without that key,
+ * etc.) it doesn't recognize, rather than this schema rejecting the
+ * entire issue list because of a field this app never even looks at.
+ */
 const youTrackCustomFieldSchema = z.object({
   name: z.string(),
-  value: youTrackFieldValueSchema,
+  value: z.unknown(),
 });
 
 const youTrackApiIssueSchema = z.object({
@@ -143,6 +148,15 @@ function firstActivityValueName(value: ActivityItem["added"]): string {
 const ACTIVITY_FIELDS = "field(name),added(name),removed(name)";
 const ACTIVITY_BATCH_SIZE = 10;
 
+/** Safely reads a string property out of a custom field's `value`, whatever shape it turns out to actually be. */
+function stringFieldValue(value: unknown, key: string): string | undefined {
+  if (value && typeof value === "object" && key in value) {
+    const raw = (value as Record<string, unknown>)[key];
+    return typeof raw === "string" ? raw : undefined;
+  }
+  return undefined;
+}
+
 function mapApiIssueToTicket(issue: YouTrackApiIssue, stateFieldName: string): YouTrackTicket {
   const stateField = issue.customFields.find((field) => field.name === stateFieldName);
   const assigneeField = issue.customFields.find((field) => field.name === "Assignee");
@@ -150,8 +164,11 @@ function mapApiIssueToTicket(issue: YouTrackApiIssue, stateFieldName: string): Y
   return {
     id: issue.idReadable,
     summary: issue.summary,
-    status: stateField?.value?.name ?? "Unknown",
-    assignee: assigneeField?.value?.fullName ?? assigneeField?.value?.login ?? null,
+    status: stringFieldValue(stateField?.value, "name") ?? "Unknown",
+    assignee:
+      stringFieldValue(assigneeField?.value, "fullName") ??
+      stringFieldValue(assigneeField?.value, "login") ??
+      null,
     createdAt: new Date(issue.created).toISOString(),
   };
 }
